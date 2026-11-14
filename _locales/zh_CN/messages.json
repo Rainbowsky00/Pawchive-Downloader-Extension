@@ -1,0 +1,8 @@
+{
+  "extName": {
+    "message": "Pawchive 下载器"
+  },
+  "extDesc": {
+    "message": "按「作者/年-月-日-标题」归档下载 Pawchive 帖子原图与视频，自动编号、收集网盘链接，并在 Edge 下稳定保留文件名。"
+  }
+}
