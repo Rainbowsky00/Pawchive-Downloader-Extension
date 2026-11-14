@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pawchive Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <span class="logo">⇣</span>
+    <div>
+      <div class="title">Pawchive Downloader</div>
+      <div class="subtitle"><span id="pageKind">Detecting page…</span> · <span id="verText"></span></div>
+    </div>
+    <button id="btnMonitor" class="mini-btn">◧ Monitor</button>
+  </header>
+
+  <section id="errorBox" class="box error hidden"></section>
+
+  <!-- Post mode -->
+  <section id="postBox" class="box hidden">
+    <div class="row"><span class="label">Author</span><b id="pAuthor"></b></div>
+    <div class="row"><span class="label">Title</span><span id="pTitle"></span></div>
+    <div class="row"><span class="label">Date</span><span id="pDate"></span></div>
+    <div class="counts" id="pCounts"></div>
+  </section>
+
+  <!-- List page mode -->
+  <section id="cardsBox" class="box hidden">
+    <div class="row"><span class="label">ID</span><span id="cUrl"></span></div>
+    <div class="row"><span class="label">Posts</span><b id="cCount"></b></div>
+    <div class="field">
+      <label><input type="radio" name="scope" value="page"> Current page only</label>
+      <label><input type="radio" name="scope" value="all"> All pages (follow ?o= pagination)</label>
+    </div>
+    <div class="field inline">
+      <span class="label">Date range</span>
+      <input type="date" id="cFrom" title="Start date (post publish date, inclusive)">
+      <span class="label">~</span>
+      <input type="date" id="cTo" title="End date (post publish date, inclusive)">
+    </div>
+    <div class="hint">Filter posts by publish date. Either side can be left empty. Pages are newest-first, so pagination stops early once a whole page is older than the start date.</div>
+    <div class="field inline">
+      <span class="label">Delay</span>
+      <input type="number" id="cDelay" min="0" step="100"> ms
+      <span class="label">Limit</span>
+      <input type="number" id="cLimit" min="0" step="1"> posts (0 = no limit)
+    </div>
+    <div class="savezone">
+      <div class="sec-title">Save location (crawled and downloaded files go here)</div>
+      <div id="dirText" class="dir-text">Detecting…</div>
+      <div class="hint">If another download extension overwrites filenames in Edge, disable that extension in <code>edge://extensions</code> and download again. Chromium lets the last-installed extension control download names.</div>
+    </div>
+    <div class="btns">
+      <button id="btnCrawl" class="primary">Start crawl</button>
+      <button id="btnCrawlCancel" class="hidden">■ Stop crawl</button>
+    </div>
+    <div id="crawlProgress" class="progress hidden"></div>
+  </section>
+
+  <!-- Common options -->
+  <section id="optBox" class="box hidden">
+    <div class="field">
+      <label class="chk">
+        <input type="checkbox" id="optRename">
+        Rename files (1, 01, 001 padded by total count)
+      </label>
+    </div>
+    <div class="field inline">
+      <span class="label">Root folder</span>
+      <input type="text" id="optRoot" placeholder="(empty = downloads root)">
+    </div>
+    <div class="hint">Save path: <code id="pathPreview">Author/YYYY-MM-DD-Title/</code></div>
+  </section>
+
+  <!-- Post mode actions -->
+  <section id="actionBox" class="box hidden">
+    <div class="savezone">
+      <div class="sec-title">Save location (this post's files go here)</div>
+      <div id="dirText2" class="dir-text">Detecting…</div>
+    </div>
+    <div class="btns">
+      <button id="btnDownload" class="primary">Download this post</button>
+    </div>
+    <div id="postResult" class="progress hidden"></div>
+  </section>
+
+  <!-- Download progress -->
+  <section id="dlBox" class="box hidden">
+    <div class="row head-row">
+      <span class="label">Progress</span>
+      <span id="dlSummary"></span>
+    </div>
+    <div id="dlPaused" class="paused hidden">
+      <div id="dlPausedText"></div>
+      <button id="btnResume" class="primary">▶ Resume</button>
+    </div>
+    <div id="dlActive" class="dl-active"></div>
+    <div class="btns">
+      <button id="btnPauseDl">⏸ Pause</button>
+      <button id="btnStopDl">■ Stop</button>
+      <button id="btnMonitor2" class="ghost">◧ Monitor</button>
+    </div>
+    <div id="dlItems" class="dl-items"></div>
+  </section>
+
+  <script src="popup.en.js"></script>
+</body>
+</html>
