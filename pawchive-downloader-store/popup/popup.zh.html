@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Pawchive Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <span class="logo">⇣</span>
+    <div>
+      <div class="title">Pawchive Downloader</div>
+      <div class="subtitle"><span id="pageKind">正在检测页面…</span> · <span id="verText"></span></div>
+    </div>
+    <button id="btnMonitor" class="mini-btn">◧ 监控小窗</button>
+  </header>
+
+  <section id="errorBox" class="box error hidden"></section>
+
+  <!-- 帖子模式 -->
+  <section id="postBox" class="box hidden">
+    <div class="row"><span class="label">作者</span><b id="pAuthor"></b></div>
+    <div class="row"><span class="label">标题</span><span id="pTitle"></span></div>
+    <div class="row"><span class="label">日期</span><span id="pDate"></span></div>
+    <div class="counts" id="pCounts"></div>
+  </section>
+
+  <!-- 列表页模式 -->
+  <section id="cardsBox" class="box hidden">
+    <div class="row"><span class="label">ID</span><span id="cUrl"></span></div>
+    <div class="row"><span class="label">帖子</span><b id="cCount"></b></div>
+    <div class="field">
+      <label><input type="radio" name="scope" value="page"> 只爬当前页</label>
+      <label><input type="radio" name="scope" value="all"> 爬全部分页（跟随 ?o= 翻页）</label>
+    </div>
+    <div class="field inline">
+      <span class="label">时间范围</span>
+      <input type="date" id="cFrom" title="起始日期（帖子发布日，含当天）">
+      <span class="label">~</span>
+      <input type="date" id="cTo" title="结束日期（帖子发布日，含当天）">
+    </div>
+    <div class="hint">按帖子发布日期（年-月-日）筛选时间段，只下载范围内的帖子；可只填一侧，留空不限。翻页最新在前，整页早于起始日会自动停止翻页。</div>
+    <div class="field inline">
+      <span class="label">每帖间隔</span>
+      <input type="number" id="cDelay" min="0" step="100"> ms
+      <span class="label">最多</span>
+      <input type="number" id="cLimit" min="0" step="1"> 帖（0=不限）
+    </div>
+    <div class="savezone">
+      <div class="sec-title">保存位置（下载与爬取的文件都存到这里）</div>
+      <div id="dirText" class="dir-text">正在获取…</div>
+      <div class="hint">若 Edge 里文件名被其他下载类扩展改写，请在 <code>edge://extensions</code> 停用该扩展后重新下载；本插件会尽量重新注册命名监听避免被抢占。</div>
+    </div>
+    <div class="btns">
+      <button id="btnCrawl" class="primary">开始爬取</button>
+      <button id="btnCrawlCancel" class="hidden">■ 停止爬取</button>
+    </div>
+    <div id="crawlProgress" class="progress hidden"></div>
+  </section>
+
+  <!-- 通用选项 -->
+  <section id="optBox" class="box hidden">
+    <div class="field">
+      <label class="chk">
+        <input type="checkbox" id="optRename">
+        重命名文件（1、01、001 按总数补零）
+      </label>
+    </div>
+    <div class="field inline">
+      <span class="label">根目录</span>
+      <input type="text" id="optRoot" placeholder="（留空 = 保存位置根）">
+    </div>
+    <div class="hint">保存路径：<code id="pathPreview">作者/年-月-日-标题/</code></div>
+  </section>
+
+  <!-- 帖子模式操作 -->
+  <section id="actionBox" class="box hidden">
+    <div class="savezone">
+      <div class="sec-title">保存位置（本帖文件存到这里）</div>
+      <div id="dirText2" class="dir-text">正在获取…</div>
+    </div>
+    <div class="btns">
+      <button id="btnDownload" class="primary">下载此帖子</button>
+    </div>
+    <div id="postResult" class="progress hidden"></div>
+  </section>
+
+  <!-- 下载进度 -->
+  <section id="dlBox" class="box hidden">
+    <div class="row head-row">
+      <span class="label">下载进度</span>
+      <span id="dlSummary"></span>
+    </div>
+    <div id="dlPaused" class="paused hidden">
+      <div id="dlPausedText"></div>
+      <button id="btnResume" class="primary">▶ 继续下载</button>
+    </div>
+    <div id="dlActive" class="dl-active"></div>
+    <div class="btns">
+      <button id="btnPauseDl">⏸ 暂停</button>
+      <button id="btnStopDl">■ 结束</button>
+      <button id="btnMonitor2" class="ghost">◧ 监控小窗</button>
+    </div>
+    <div id="dlItems" class="dl-items"></div>
+  </section>
+
+  <script src="popup.zh.js"></script>
+</body>
+</html>
