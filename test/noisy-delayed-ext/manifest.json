@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "Noisy Filename Extension Delayed (test only)",
+  "version": "1.0",
+  "permissions": ["downloads"],
+  "background": { "service_worker": "background.js" }
+}
