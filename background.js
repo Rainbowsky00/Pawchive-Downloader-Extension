@@ -4,10 +4,11 @@ if (typeof importScripts === 'function') {
 }
 if (!globalThis.PawLang) {
   let __lang = 'en';
+  try { __lang = (typeof navigator !== 'undefined' && navigator.language) || __lang; } catch (e) { /* ignore */ }
   try {
-    __lang = (typeof chrome !== 'undefined' && chrome.i18n && chrome.i18n.getUILanguage)
-      ? chrome.i18n.getUILanguage()
-      : ((typeof navigator !== 'undefined' && navigator.language) || 'en');
+    if (typeof chrome !== 'undefined' && chrome.i18n && chrome.i18n.getUILanguage) {
+      __lang = navigator && navigator.language ? __lang : chrome.i18n.getUILanguage();
+    }
   } catch (e) { /* ignore */ }
   const __lc = String(__lang || 'en').toLowerCase().replace(/_/g, '-');
   globalThis.PawLang = {

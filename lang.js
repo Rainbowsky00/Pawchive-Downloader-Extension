@@ -1,21 +1,26 @@
 /**
  * Language detection shared by the service worker, content script and extension pages.
  *
- * Chinese UI is used ONLY for Simplified Chinese browser locales
- * (zh-CN / zh-Hans / zh-SG / zh-MY). Traditional Chinese (zh-TW / zh-HK / zh-MO /
- * zh-Hant) and every other language fall back to English.
+ * The UI language follows the FIRST entry of the browser's preferred-language list
+ * (the list the user can reorder in settings), because that is the control users
+ * actually change. Simplified Chinese locales (zh-CN / zh-Hans / zh-SG / zh-MY)
+ * get the Chinese UI; everything else - including Traditional Chinese (zh-TW /
+ * zh-HK / zh-MO / zh-Hant) - falls back to English.
  */
 (() => {
   'use strict';
-  let lang = 'en';
+  let pref = '';
+  let ui = '';
+  try { pref = (navigator && navigator.language) || ''; } catch (e) { /* ignore */ }
   try {
-    if (chrome && chrome.i18n && chrome.i18n.getUILanguage) lang = chrome.i18n.getUILanguage();
-    else if (navigator && navigator.language) lang = navigator.language;
-  } catch (e) { /* fall back to English */ }
-  const lc = String(lang || 'en').toLowerCase().replace(/_/g, '-');
+    if (chrome && chrome.i18n && chrome.i18n.getUILanguage) ui = chrome.i18n.getUILanguage();
+  } catch (e) { /* ignore */ }
+  const first = String(pref || ui || 'en');
+  const lc = first.toLowerCase().replace(/_/g, '-');
   const isZh = /^zh-(cn|hans|sg|my)(-|$)/.test(lc);
   globalThis.PawLang = {
-    lang,
+    lang: first,
+    uiLang: ui || first,
     isZh,
     pick(zh, en) { return isZh ? zh : en; }
   };
