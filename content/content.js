@@ -327,78 +327,145 @@
     } catch (e) { /* ignore */ }
   }
 
+  // 给后台发消息并等待响应（用于逐帖下载状态）
+  function sendRuntimeAsync(msg) {
+    return new Promise((resolve) => {
+      try {
+        const p = chrome.runtime.sendMessage(msg);
+        if (p && typeof p.then === 'function') p.then(resolve).catch(() => resolve(null));
+        else resolve(null);
+      } catch (e) { resolve(null); }
+    });
+  }
+
+  function cleanPostUrl(raw, base) {
+    try {
+      const u = new URL(raw, base || location.href);
+      u.search = ''; u.hash = '';
+      return u.href;
+    } catch (e) { return ''; }
+  }
+
+  let listing = false;
+  let postsCache = { key: '', posts: [] };
+
+  // 收集列表页里的帖子（只抓列表页，不抓帖子详情）
+  async function collectList(opts) {
+    const base = new URL(location.href);
+    base.hash = '';
+    const step = 50;
+    const offsets = [0];
+    if (opts.scope === 'all') {
+      const maxO = Math.max(0, opts.maxOffset || 0);
+      for (let o = step; o <= maxO; o += step) offsets.push(o);
+    }
+
+    const found = [];
+    const seen = new Set();
+    let extraPages = 0;
+    for (let i = 0; i < offsets.length; i++) {
+      if (cancelRequested) break;
+      const u = new URL(base);
+      if (offsets[i] > 0) u.searchParams.set('o', String(offsets[i]));
+      else u.searchParams.delete('o');
+      sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'list', page: i + 1, pages: offsets.length, url: u.href });
+      try {
+        const html = await fetchTextRetry(u.href);
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const cards = [];
+        doc.querySelectorAll('article.post-card').forEach((card) => {
+          const a = card.querySelector('a[href*="/post/"]');
+          if (!a) return;
+          const url = cleanPostUrl(a.getAttribute('href'), u.href);
+          if (!url) return;
+          const t = card.querySelector('.timestamp');
+          const header = card.querySelector('.post-card__header');
+          const footer = card.querySelector('.post-card__footer');
+          cards.push({
+            url,
+            title: ((header && header.textContent) || '').trim(),
+            date: normalizeDate((t && (t.getAttribute('datetime') || t.textContent)) || ''),
+            attachments: ((((footer && footer.textContent) || '').match(/(\d+)\s*attachments?/i) || [])[1]) || ''
+          });
+        });
+        let addedNew = 0;
+        for (const c of cards) {
+          if (!seen.has(c.url)) { seen.add(c.url); found.push(c); addedNew++; }
+        }
+        // 计划分页用尽但最后一页仍有新帖子 → 追加下一页
+        if (i === offsets.length - 1 && opts.scope === 'all' && cards.length > 0 && addedNew > 0
+            && !cancelRequested && extraPages < 200) {
+          offsets.push(offsets[i] + 50);
+          extraPages++;
+          sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'listExtend', page: offsets.length, url: u.href });
+        }
+      } catch (e) {
+        sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'listError', url: u.href, message: String(e) });
+      }
+      if (i < offsets.length - 1 && !cancelRequested) await sleep(opts.delay);
+    }
+    return found;
+  }
+
+  // 只加载帖子列表（供弹窗勾选），结果缓存在标签页内
+  async function listPosts(opts) {
+    if (listing || crawling) return { ok: false, message: 'A task is already running' };
+    listing = true;
+    cancelRequested = false;
+    try {
+      const posts = await collectList(opts);
+      postsCache = { key: location.href, posts };
+      sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'listed', count: posts.length });
+      return { ok: true, posts };
+    } finally {
+      listing = false;
+    }
+  }
+
+  // 等后台把这一帖的任务全部结案（完成/失败/丢弃），再抓下一帖
+  async function waitPostDone(postKey, index, total) {
+    const deadline = Date.now() + 30 * 60e3;
+    while (!cancelRequested && Date.now() < deadline) {
+      const st = await sendRuntimeAsync({ type: 'pawchivePostStatus', postKey });
+      if (!st || st.unknown || st.pending <= 0) return;
+      sendRuntime({
+        type: 'pawchiveCrawlProgress', phase: 'postWait',
+        index, total, pending: st.pending, done: st.done, failed: st.failed, postTotal: st.total
+      });
+      await sleep(1000);
+    }
+  }
+
   async function crawl(opts) {
-    if (crawling) return { started: false, message: (globalThis.PawLang ? PawLang.pick('已有爬取任务在进行中', 'A crawl is already running') : 'A crawl is already running') };
+    if (crawling || listing) return { started: false, message: (globalThis.PawLang ? PawLang.pick('已有任务在进行中', 'A task is already running') : 'A task is already running') };
     crawling = true;
     cancelRequested = false;
     (async () => {
       try {
-        const base = new URL(location.href);
-        base.hash = '';
-        const step = 50;
-        const offsets = [0];
-        if (opts.scope === 'all') {
-          const maxO = Math.max(0, opts.maxOffset || 0);
-          for (let o = step; o <= maxO; o += step) offsets.push(o);
-        }
-
-        // 1. 收集所有分页里的帖子链接（带卡片日期，用于时间范围过滤）
-        const found = [];
-        const seen = new Set();
-        let extraPages = 0;
-        for (let i = 0; i < offsets.length; i++) {
-          if (cancelRequested) break;
-          const u = new URL(base);
-          if (offsets[i] > 0) u.searchParams.set('o', String(offsets[i]));
-          else u.searchParams.delete('o');
-          sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'list', page: i + 1, pages: offsets.length, url: u.href });
-          try {
-            const html = await fetchTextRetry(u.href);
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-            const cards = [];
-            doc.querySelectorAll('article.post-card').forEach((card) => {
-              const a = card.querySelector('a[href*="/post/"]');
-              if (!a) return;
-              const abs = absUrl(a.getAttribute('href'), u.href);
-              if (!abs) return;
-              const clean = new URL(abs);
-              clean.search = ''; clean.hash = '';
-              const t = card.querySelector('.timestamp');
-              cards.push({ url: clean.href, date: normalizeDate((t && (t.getAttribute('datetime') || t.textContent)) || '') });
-            });
-            const { kept, earlyStop } = filterCardsByDate(cards, opts.dateFrom, opts.dateTo);
-            let addedNew = 0;
-            for (const c of kept) {
-              if (!seen.has(c.url)) { seen.add(c.url); found.push(c); addedNew++; }
-            }
-            if (earlyStop) {
-              sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'earlyStop', page: i + 1, url: u.href });
-              break;
-            }
-            // 计划分页用尽但最后一页仍有卡片且带来了新帖子 → 追加下一页
-            // （分页器可能没有显示到最后一页；若站点返回重复内容，addedNew=0 自然停止）
-            if (i === offsets.length - 1 && opts.scope === 'all' && cards.length > 0 && addedNew > 0
-                && !cancelRequested && extraPages < 200) {
-              offsets.push(offsets[i] + 50);
-              extraPages++;
-              sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'listExtend', page: offsets.length, url: u.href });
-            }
-          } catch (e) {
-            sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'listError', url: u.href, message: String(e) });
+        const explicit = Array.isArray(opts.urls) && opts.urls.length > 0;
+        let urls;
+        if (explicit) {
+          // 弹窗里勾选的帖子：直接用这些 URL，不再收集列表
+          const seen = new Set();
+          urls = [];
+          for (const raw of opts.urls) {
+            const u = cleanPostUrl(raw, location.href);
+            if (u && !seen.has(u)) { seen.add(u); urls.push({ url: u }); }
           }
-          if (i < offsets.length - 1) await sleep(opts.delay);
+        } else {
+          const found = await collectList(opts);
+          urls = found;
         }
+        if (opts.limit > 0 && urls.length > opts.limit) urls = urls.slice(0, opts.limit);
 
-        let urls = found;
-        if (opts.limit > 0 && found.length > opts.limit) urls = found.slice(0, opts.limit);
-
-        // 2. 逐帖抓取并解析，交给后台下载（无日期卡片在此二次核对时间范围）
+        // 逐帖：抓取 → 解析 → 入队 → 等这一帖下载完 → 下一帖
         let done = 0;
         let failed = 0;
         let skipped = 0;
         for (const item of urls) {
           if (cancelRequested) break;
-          sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'post', index: done + failed + skipped + 1, total: urls.length, url: item.url });
+          const index = done + failed + skipped + 1;
+          sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'post', index, total: urls.length, url: item.url });
           try {
             const html = await fetchTextRetry(item.url);
             const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -406,18 +473,27 @@
             if (!payload) {
               skipped++;
               sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'skip', url: item.url, reason: (globalThis.PawLang ? PawLang.pick('解析失败（非帖子页）', 'parse failed (not a post page)') : 'parse failed (not a post page)') });
-            } else if (!inDateRange(payload.date, opts.dateFrom, opts.dateTo)) {
+            } else if (!explicit && !inDateRange(payload.date, opts.dateFrom, opts.dateTo)) {
               skipped++;
               sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'skip', url: item.url, date: payload.date });
             } else {
-              sendRuntime({ type: 'pawchivePost', payload, options: opts.options });
-              done++;
+              const res = await sendRuntimeAsync({ type: 'pawchivePost', payload, options: opts.options });
+              if (!res || !res.ok) {
+                failed++;
+                sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'postError', url: item.url, message: (res && res.error) || 'enqueue failed' });
+              } else {
+                if (res.jobs > 0 && res.postKey) {
+                  sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'postQueued', index, total: urls.length, jobs: res.jobs, folder: res.folder });
+                  await waitPostDone(res.postKey, index, urls.length);
+                }
+                done++;
+              }
             }
           } catch (e) {
             failed++;
             sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'postError', url: item.url, message: String(e) });
           }
-          await sleep(opts.delay);
+          if (!cancelRequested) await sleep(opts.delay);
         }
         sendRuntime({ type: 'pawchiveCrawlProgress', phase: 'done', posts: done, failed, skipped, cancelled: cancelRequested });
       } finally {
@@ -438,6 +514,15 @@
     if (msg.type === 'pawchiveCrawl') {
       crawl(msg).then(sendResponse);
       return true;
+    }
+    if (msg.type === 'pawchiveListPosts') {
+      listPosts(msg).then(sendResponse).catch((e) => sendResponse({ ok: false, message: String(e) }));
+      return true;
+    }
+    if (msg.type === 'pawchiveGetPosts') {
+      const same = postsCache.key === location.href;
+      sendResponse({ ok: true, cached: same && postsCache.posts.length > 0, posts: same ? postsCache.posts : [] });
+      return;
     }
     if (msg.type === 'pawchiveCrawlCancel') {
       cancelRequested = true;

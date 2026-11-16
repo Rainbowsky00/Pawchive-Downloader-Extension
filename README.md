@@ -15,6 +15,11 @@ reliable filenames even when other download extensions are installed.
 - **links.txt** — collects cloud-drive links (Dropbox, Google Drive, Mega, Terabox,
   OneDrive, PikPak, synology.me, …), video links and other attachments found in the
   post body. Videos are downloaded as well.
+- **Post picker** — on author pages, tick the posts you want from the current page,
+  or click **Load all pages** to list every post; only the selected posts are downloaded.
+- **One post at a time** — each post is fetched, downloaded and finished before the next
+  post is started, so downloads begin immediately instead of waiting for every link to
+  be collected first.
 - **Author pages** — crawl the current page or all pages (`?o=` pagination),
   with an optional publish-date range filter and per-post delay.
 - **Queue controls** — pause / resume / stop, live per-file progress, retries,
@@ -91,6 +96,8 @@ node test/sw_download_probe.mjs edge          # download pipeline + naming
 PW_NOISY=1 node test/sw_download_probe.mjs edge   # with a conflicting extension
 node test/scan_id_probe.mjs <author-url>      # author-ID detection
 node test/lang_probe.mjs                      # zh-CN / zh-TW / en-US UI language
+node test/local_sequential_probe.mjs          # post picker + per-post pipeline (local fixture)
+node test/popup_selection_probe.mjs           # popup checkbox UI
 
 # Build a store package (excludes test/ and docs/, single manifest.json)
 python build_store_zip.py

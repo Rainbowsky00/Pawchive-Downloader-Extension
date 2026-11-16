@@ -17,6 +17,8 @@
     dlBox: $('dlBox'), dlSummary: $('dlSummary'), dlItems: $('dlItems'),
     dlPaused: $('dlPaused'), dlPausedText: $('dlPausedText'), btnResume: $('btnResume'),
     btnMonitor: $('btnMonitor'), btnMonitor2: $('btnMonitor2'), btnPauseDl: $('btnPauseDl'), btnStopDl: $('btnStopDl'),
+    btnSelectAll: $('btnSelectAll'), btnSelectNone: $('btnSelectNone'), btnLoadAllPosts: $('btnLoadAllPosts'),
+    postList: $('postList'), btnDownloadSelected: $('btnDownloadSelected'),
     dlActive: $('dlActive'), dirText: $('dirText'), dirText2: $('dirText2'), verText: $('verText')
   };
 
@@ -127,6 +129,10 @@
       els.pageKind.textContent = 'List page (author / search results)';
       els.cUrl.textContent = scan.authorId || scan.url;
       els.cCount.textContent = `${scan.cards.length} posts on this page` + (scan.maxOffset > 0 ? `, paginated to o=${scan.maxOffset}` : '');
+      allPosts = scan.cards.map((c) => ({ url: c.url, title: c.title, date: c.date, attachments: c.attachments }));
+      selectedPosts = new Set(allPosts.map((p) => p.url));
+      renderPostList();
+      loadCachedPosts();
       show(els.cardsBox, true);
     } else {
       els.pageKind.textContent = 'Unsupported page';
@@ -345,11 +351,155 @@
         crawlActive = false;
         els.btnCrawl.disabled = false;
         els.btnCrawlCancel.disabled = false;
+        if (els.btnDownloadSelected) els.btnDownloadSelected.disabled = false;
         show(els.btnCrawlCancel, false);
       }
     }
     if (msg.type === 'pawchivePost') receivedPosts++;
   });
+
+  const SEL = {
+    att: ' attachments',
+    noPosts: 'No posts on this page',
+    downloadSelected: 'Download selected',
+    loading: 'Loading all pages…',
+    loaded: (n) => `Loaded ${n} posts`,
+    loadFail: 'Load failed: ',
+    noSelection: 'Select at least one post first.',
+    started: (n) => `Downloading ${n} selected posts (one post at a time)…`,
+    startFail: 'Failed to start: '
+  };
+  /* ---------------- 帖子勾选与逐帖下载 ---------------- */
+
+  let allPosts = [];
+  let selectedPosts = new Set();
+  let postsLoading = false;
+
+  function renderPostList() {
+    if (!els.postList) return;
+    const list = allPosts.slice(0, 3000);
+    if (!list.length) {
+      els.postList.innerHTML = '<div class="post-empty">' + SEL.noPosts + '</div>';
+      updateSelectedCount();
+      return;
+    }
+    const nodes = list.map((p) => {
+      const label = document.createElement('label');
+      label.className = 'post-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selectedPosts.has(p.url);
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedPosts.add(p.url);
+        else selectedPosts.delete(p.url);
+        updateSelectedCount();
+      });
+      const title = document.createElement('span');
+      title.className = 'post-title';
+      title.textContent = p.title || p.url;
+      const meta = document.createElement('span');
+      meta.className = 'post-meta';
+      meta.textContent = [p.date || '', p.attachments ? p.attachments + SEL.att : ''].filter(Boolean).join(' · ');
+      label.append(cb, title, meta);
+      return label;
+    });
+    els.postList.replaceChildren(...nodes);
+    updateSelectedCount();
+  }
+
+  function updateSelectedCount() {
+    if (els.btnDownloadSelected) els.btnDownloadSelected.textContent = `${SEL.downloadSelected} (${selectedPosts.size})`;
+  }
+
+  async function loadCachedPosts() {
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, { type: 'pawchiveGetPosts' });
+      if (res && res.cached && Array.isArray(res.posts) && res.posts.length > allPosts.length) {
+        allPosts = res.posts;
+        selectedPosts = new Set(allPosts.map((p) => p.url));
+        renderPostList();
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  async function loadAllPosts() {
+    if (postsLoading) return;
+    postsLoading = true;
+    if (els.btnLoadAllPosts) els.btnLoadAllPosts.disabled = true;
+    show(els.crawlProgress, true);
+    els.crawlProgress.textContent = SEL.loading;
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, {
+        type: 'pawchiveListPosts',
+        scope: 'all',
+        delay: getOptions().delay,
+        maxOffset: (scan && scan.maxOffset) || 0
+      });
+      if (res && res.ok && Array.isArray(res.posts)) {
+        allPosts = res.posts;
+        selectedPosts = new Set(allPosts.map((p) => p.url));
+        renderPostList();
+        els.crawlProgress.textContent += '\r\n' + SEL.loaded(allPosts.length);
+      } else {
+        els.crawlProgress.textContent += '\r\n' + SEL.loadFail + ((res && res.message) || '');
+      }
+    } catch (e) {
+      els.crawlProgress.textContent += '\r\n' + SEL.loadFail + e.message;
+    } finally {
+      postsLoading = false;
+      if (els.btnLoadAllPosts) els.btnLoadAllPosts.disabled = false;
+    }
+  }
+
+  async function downloadSelected() {
+    if (!selectedPosts.size) {
+      show(els.crawlProgress, true);
+      els.crawlProgress.textContent = SEL.noSelection;
+      return;
+    }
+    const urls = [...selectedPosts];
+    const o = getOptions();
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, {
+        type: 'pawchiveCrawl',
+        urls,
+        scope: 'selected',
+        delay: o.delay,
+        limit: 0,
+        options: { rename: o.rename, root: o.root }
+      });
+      if (res && res.started) {
+        crawlActive = true;
+        receivedPosts = 0;
+        show(els.btnCrawlCancel, true);
+        els.btnCrawl.disabled = true;
+        if (els.btnDownloadSelected) els.btnDownloadSelected.disabled = true;
+        show(els.crawlProgress, true);
+        els.crawlProgress.textContent = SEL.started(urls.length);
+      } else {
+        show(els.crawlProgress, true);
+        els.crawlProgress.textContent = (res && res.message) || SEL.startFail;
+      }
+    } catch (e) {
+      show(els.crawlProgress, true);
+      els.crawlProgress.textContent = SEL.startFail + e.message;
+    }
+  }
+
+  if (els.btnSelectAll) {
+    els.btnSelectAll.addEventListener('click', () => {
+      selectedPosts = new Set(allPosts.map((p) => p.url));
+      renderPostList();
+    });
+  }
+  if (els.btnSelectNone) {
+    els.btnSelectNone.addEventListener('click', () => {
+      selectedPosts.clear();
+      renderPostList();
+    });
+  }
+  if (els.btnLoadAllPosts) els.btnLoadAllPosts.addEventListener('click', loadAllPosts);
+  if (els.btnDownloadSelected) els.btnDownloadSelected.addEventListener('click', downloadSelected);
 
   function formatCrawlLine(msg) {
     switch (msg.phase) {
@@ -360,6 +510,9 @@
       case 'post': return `[post] ${msg.index}/${msg.total}: ${msg.url}`;
       case 'skip': return `[skip] ${msg.date || 'no date'} outside date range: ${msg.url}`;
       case 'postError': return `[post] failed: ${msg.url} (${msg.message})`;
+      case 'postQueued': return `[post] ${msg.index}/${msg.total}: queued ${msg.jobs} files`;
+      case 'postWait': return `[download] post ${msg.index}/${msg.total}: ${msg.pending} left (done ${msg.done}${msg.failed ? `, failed ${msg.failed}` : ''})`;
+      case 'listed': return `[list] loaded ${msg.count} posts`;
       case 'done': {
         const parts = [`[done] ${msg.posts} posts succeeded`];
         if (msg.skipped) parts.push(`skipped ${msg.skipped}`);

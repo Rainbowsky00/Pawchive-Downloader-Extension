@@ -30,6 +30,18 @@
     <div class="row"><span class="label">ID</span><span id="cUrl"></span></div>
     <div class="row"><span class="label">Posts</span><b id="cCount"></b></div>
     <div class="field">
+      <div class="sec-title">Select posts to download (all selected by default)</div>
+      <div class="post-tools">
+        <button id="btnSelectAll">Select all</button>
+        <button id="btnSelectNone">Select none</button>
+        <button id="btnLoadAllPosts">Load all pages</button>
+      </div>
+      <div id="postList" class="post-list"></div>
+    </div>
+    <div class="btns">
+      <button id="btnDownloadSelected" class="primary">Download selected (0)</button>
+    </div>
+    <div class="field">
       <label><input type="radio" name="scope" value="page"> Current page only</label>
       <label><input type="radio" name="scope" value="all"> All pages (follow ?o= pagination)</label>
     </div>

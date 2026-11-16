@@ -336,6 +336,15 @@ chrome.storage.local.get([QUEUE_KEY, DONE_KEY, FOLDER_KEY, OPTS_KEY]).then((vals
       queue.push(j);
       resumed++;
     }
+    // 按 postKey 重建统计，使内容脚本跨 SW 重启仍能等待这一帖下载完
+    const restoredByPost = new Map();
+    for (const j of queue) {
+      if (!j.postKey) continue;
+      restoredByPost.set(j.postKey, (restoredByPost.get(j.postKey) || 0) + 1);
+    }
+    for (const [key, total] of restoredByPost) {
+      if (!postStats.has(key)) postStats.set(key, { total, pending: total, done: 0, failed: 0, at: Date.now() });
+    }
     chrome.storage.local.set({ [QUEUE_KEY]: [] }).catch(() => {});
     if (expired) {
       pushDiag({ type: 'skipped', detail: T(`${expired} 个旧任务的下载链接已过期，已丢弃；请重新爬取该帖子`, `${expired} old tasks had expired download links and were dropped; re-crawl the post`) });
@@ -388,12 +397,46 @@ function noteSuccess() {
 
 function enqueueJob(job) {
   const uid = jobUid(job);
-  if (doneSet.has(uid) || pendingSet.has(uid)) { state.deduped++; return; }
+  if (doneSet.has(uid) || pendingSet.has(uid)) { state.deduped++; return false; }
   pendingSet.add(uid);
   queue.push(job);
   state.queued++;
   refreshNextPending();
   schedulePersist();
+  return true;
+}
+
+/* ---------------- 逐帖进度（供内容脚本等待“这一帖下载完”） ---------------- */
+const postStats = new Map();   // postKey -> {total, pending, done, failed, at}
+let postSeq = 0;
+
+function trackPost(postKey, total) {
+  if (!postKey || !total) return;
+  postStats.set(postKey, { total, pending: total, done: 0, failed: 0, at: Date.now() });
+}
+
+// 单个任务结案（完成/失败/被丢弃）时扣减所在帖子的待完成数
+function settlePost(job, ok) {
+  if (!job || !job.postKey) return;
+  const s = postStats.get(job.postKey);
+  if (!s || s.pending <= 0) return;
+  s.pending--;
+  s.done++;
+  if (!ok) s.failed++;
+}
+
+function getPostStatus(postKey) {
+  const s = postStats.get(postKey);
+  if (!s) return { unknown: true, total: 0, pending: 0, done: 0, failed: 0 };
+  return { total: s.total, pending: s.pending, done: s.done, failed: s.failed };
+}
+
+// 清理 30 分钟前已排空的统计，避免长时间运行后堆积
+function prunePostStats() {
+  const cutoff = Date.now() - 30 * 60e3;
+  for (const [k, s] of postStats) {
+    if (s.pending <= 0 && s.at < cutoff) postStats.delete(k);
+  }
 }
 
 function ensureHeartbeat() {
@@ -730,6 +773,7 @@ async function downloadJob(job) {
       if (outcome === 'complete') {
         // 停止前已完成的文件照常计数与标记（文件已落盘）
         state.sent++; state.completed++; consecutiveJobFailures = 0;
+        settlePost(job, true);
         markDone(uid); noteSuccess();
         pushDiag({ type: 'done', filename: job.filename, bytes: activeEntry.received, via: activeEntry.via || T('直链', 'direct') });
         return;
@@ -743,6 +787,8 @@ async function downloadJob(job) {
           requeued = true;
           refreshNextPending();
         }
+        // 暂停的任务会重新入队，不算结案；停止/重置才算
+        if (!state.paused) settlePost(job, true);
         pushItem({ filename: job.filename, kind: job.kind, status: state.paused ? 'sending' : 'failed' });
         pushDiag({ type: state.paused ? 'paused' : 'discarded', filename: job.filename });
         return;
@@ -750,6 +796,7 @@ async function downloadJob(job) {
       if (outcome === 'transient') noteRateLimited();
       if (outcome === 'fatal' || attempt >= MAX_ATTEMPTS) {
         state.sent++; state.failed++;
+        settlePost(job, false);
         state.lastError = errMsg || 'download failed';
         failedJobs.push({ filename: job.filename, error: state.lastError });
         if (failedJobs.length > 100) failedJobs.shift();
@@ -837,6 +884,8 @@ function enqueuePost(payload, options) {
   const sub = payload.date ? `${payload.date}-${titlePart}` : titlePart;
   const baseFolder = joinPath([root, author, sub]);
   const folder = resolveFolder(baseFolder, payload.postId);
+  // 每一帖一个 key，供内容脚本等待“这一帖下载完再抓下一帖”
+  const postKey = 'p' + (++postSeq) + '-' + (payload.postId || 'x') + '-' + Date.now().toString(36);
 
   // 统一媒体顺序：Files 区出现顺序（图片+视频混排）+ 正文内嵌视频
   let ordered = Array.isArray(payload.media) && payload.media.length
@@ -857,13 +906,12 @@ function enqueuePost(payload, options) {
     if (rename) {
       // 统一编号：1 / 01 / 001（扩展名保留），文件夹内不出现任何原始文件名
       const ext = sanitizeText(m.ext || urlExt(m.url, 'bin'), 8) || 'bin';
-      enqueueJob({ url: m.url, filename: `${folder}/${padIndex(i + 1, ordered.length)}.${ext}`, kind: m.kind || 'image' });
+      if (enqueueJob({ url: m.url, filename: `${folder}/${padIndex(i + 1, ordered.length)}.${ext}`, kind: m.kind || 'image', postKey })) added++;
     } else {
       const base = m.filename || urlBasename(m.url) || `file-${i + 1}`;
       const ext = m.ext || urlExt(m.url, 'bin');
-      enqueueJob({ url: m.url, filename: `${folder}/${sanitizeFilename(base, `file-${i + 1}`, ext)}`, kind: m.kind || 'image' });
+      if (enqueueJob({ url: m.url, filename: `${folder}/${sanitizeFilename(base, `file-${i + 1}`, ext)}`, kind: m.kind || 'image', postKey })) added++;
     }
-    added++;
   });
 
   // 网盘 / 视频链接 / 附件 → links.txt
@@ -871,22 +919,30 @@ function enqueuePost(payload, options) {
   if ((links.drive && links.drive.length) || (links.video && links.video.length) || (links.attach && links.attach.length)) {
     const txt = buildTxt(payload);
     const b64 = bytesToBase64(new TextEncoder().encode(txt));
-    enqueueJob({
+    if (enqueueJob({
       kind: 'txt',
       b64,
       mime: 'text/plain',
       dataUrl: 'data:text/plain;charset=utf-8,' + encodeURIComponent(txt),   // 回退用
-      filename: `${folder}/links.txt`
-    });
-    added++;
+      filename: `${folder}/links.txt`,
+      postKey
+    })) added++;
   }
 
+  trackPost(postKey, added);
   if (added > 0) {
     pushDiag({ type: 'queued', filename: folder + '/ (' + added + T(' 个任务', ' tasks') + ')' });
     openMonitor(false);
   }
   pump();
-  return { ok: true, folder, images: (payload.images || []).length, videos: (payload.videos || []).length, jobs: added };
+  return {
+    ok: true,
+    postKey,
+    folder,
+    images: (payload.images || []).length,
+    videos: (payload.videos || []).length,
+    jobs: added
+  };
 }
 
 /* ---------------- 控制：暂停 / 继续 / 结束 / 重置 ---------------- */
@@ -916,6 +972,7 @@ function doResumeQueue() {
 function doStopQueue() {
   controlGen++;
   pushDiag({ type: 'action', detail: T('结束下载（队列已清空）', 'Stop requested (queue cleared)') });
+  for (const j of queue) settlePost(j, true);
   queue.length = 0;
   pendingSet.clear();
   state.queued = 0;
@@ -933,7 +990,9 @@ function doResetRecords() {
   pushDiag({ type: 'action', detail: T('清空下载记录', 'Download records cleared') });
   doneSet.clear();
   folderOwner = {};
+  for (const j of queue) settlePost(j, true);
   queue.length = 0;
+  postStats.clear();
   pendingSet.clear();
   cancelActiveDownloads();
   cancelCrawl();
@@ -1013,6 +1072,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'pawchiveStopQueue') { sendResponse(doStopQueue()); return; }
   if (msg.type === 'pawchiveResetRecords') { sendResponse(doResetRecords()); return; }
   if (msg.type === 'pawchiveGetState') { sendResponse(getStateSnapshot()); return; }
+  if (msg.type === 'pawchivePostStatus') {
+    prunePostStats();
+    sendResponse(getPostStatus(msg.postKey));
+    return;
+  }
   if (msg.type === 'pawchiveOpenMonitor') {
     openMonitor(true).then(() => sendResponse({ ok: true }));
     return true;

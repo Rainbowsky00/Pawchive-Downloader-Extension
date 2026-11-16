@@ -74,7 +74,7 @@ const ev = async (expr, sid) => {
       version: chrome.runtime.getManifest().version
     })`, sid);
     log('popup:', JSON.stringify(r));
-    if (r.version !== '1.5.5') { log('!! 版本不是 1.5.5'); fail++; }
+    if (r.version !== '1.6.0') { log('!! 版本不是 1.6.0'); fail++; }
     if (!r.dirText) { log('!! 保存位置文本未渲染'); fail++; }
     await send('Target.closeTarget', { targetId: t.targetId });
   }

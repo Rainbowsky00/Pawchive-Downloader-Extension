@@ -30,6 +30,18 @@
     <div class="row"><span class="label">ID</span><span id="cUrl"></span></div>
     <div class="row"><span class="label">帖子</span><b id="cCount"></b></div>
     <div class="field">
+      <div class="sec-title">选择要下载的帖子（默认全选）</div>
+      <div class="post-tools">
+        <button id="btnSelectAll">全选</button>
+        <button id="btnSelectNone">全不选</button>
+        <button id="btnLoadAllPosts">加载所有分页</button>
+      </div>
+      <div id="postList" class="post-list"></div>
+    </div>
+    <div class="btns">
+      <button id="btnDownloadSelected" class="primary">下载选中帖子（0）</button>
+    </div>
+    <div class="field">
       <label><input type="radio" name="scope" value="page"> 只爬当前页</label>
       <label><input type="radio" name="scope" value="all"> 爬全部分页（跟随 ?o= 翻页）</label>
     </div>

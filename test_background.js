@@ -119,7 +119,7 @@ globalThis.chrome = {
 
 const src = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
 // 同一个 eval 内导出引用（间接 eval 的 const 不会进入全局词法环境）
-(0, eval)(src + '\n;globalThis.__bg = { state, queue, doneSet };');
+(0, eval)(src + '\n;globalThis.__bg = { state, queue, doneSet, postStats };');
 
 let pass = 0, fail = 0;
 function eq(actual, expected, label) {
@@ -346,6 +346,30 @@ const clearDone = () => globalThis.__bg.doneSet.clear();
   eq(captured.length, stopBase, '结束后无新增下载派发（排队任务已取消）');
   eq(stStop.doneCount, 2, '在途 2 个自然完成');
 
+
+  /* 逐帖状态：入队返回 postKey，全部结案后 pending 归零 */
+  clearDone();
+  dlState.hold = true;
+  dlState.held = [];
+  const trackPayload = {
+    kind: 'post', postId: 'track1', author: 'A', title: 'Track', date: '2026-01-01',
+    images: [
+      { url: 'https://track.test/1.jpg', filename: '1.jpg', ext: 'jpg' },
+      { url: 'https://track.test/2.jpg', filename: '2.jpg', ext: 'jpg' },
+      { url: 'https://track.test/3.jpg', filename: '3.jpg', ext: 'jpg' }
+    ],
+    videos: [], media: [], attach: [], links: { drive: [], video: [], attach: [] }
+  };
+  const tracked = enqueuePost(trackPayload, { rename: true, root: '' });
+  eq(tracked.jobs, 3, '逐帖入队返回 jobs=3');
+  eq(typeof tracked.postKey, 'string', '逐帖入队返回 postKey');
+  const ts0 = globalThis.__bg.postStats.get(tracked.postKey);
+  eq([ts0.total, ts0.pending, ts0.done], [3, 3, 0], '入队后该帖 pending=3');
+  dlState.hold = false;
+  releaseHeld();
+  await drain();
+  const ts1 = globalThis.__bg.postStats.get(tracked.postKey);
+  eq([ts1.pending, ts1.done, ts1.failed], [0, 3, 0], '该帖全部完成后 pending=0');
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exitCode = fail ? 1 : 0;
